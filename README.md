@@ -17,6 +17,9 @@ Ensure you have the following tools installed on your system:
 -   `ssh` client
 -   `notify-send` (optional, for desktop notifications)
 
+**On the remote server:**
+-   `python3` (for the temporary HTTP server)
+
 ### Installation
 
 1.  **Clone the repository:**
@@ -49,32 +52,18 @@ This section describes the available scripts. The configurations are done inside
 
 ### 📥 `backup_homelab.sh`
 
-This script performs a multi-destination backup of Proxmox virtual machine dumps using `rclone`.
+This script performs a multi-destination backup of Proxmox virtual machine dumps using an optimized `rclone` HTTP transfer method.
 
 **Features:**
--   Connects to the Proxmox server via SFTP using a pre-configured `rclone` remote.
--   Creates a mirror of the remote backup directory (`/var/lib/vz/dump`) to a local external HDD. This transfer is optimized for speed with multi-threading.
--   Keeps only the 2 most recent backup archives on the HDD to save space.
--   Uploads the latest backup archive from the HDD to a cloud storage provider (e.g., Google Drive) using `rclone`.
--   Cleans the cloud directory, ensuring only the very last backup is stored.
--   Sends a Telegram notification with the status (success or failure) and a summary.
+-   **HTTP Turbo Transfer**: Instead of SFTP, the script initiates a temporary `python3` web server on the remote Proxmox host via SSH.
+-   **On-the-fly Rclone Remote**: It then uses an in-line `rclone` HTTP remote to download the files at high speed, without requiring any prior `rclone` configuration for the source.
+-   **Automatic Cleanup**: The temporary web server on the remote host is automatically terminated after the transfer is complete.
+-   **Local Rotation**: Keeps only the 2 most recent backup archives on the local HDD to save space.
+-   **Cloud Sync**: Uploads the latest backup archive from the HDD to a cloud storage provider (e.g., Google Drive) using a standard, pre-configured `rclone` remote.
+-   **Cloud Rotation**: Cleans the cloud directory, ensuring only the very last backup is stored.
+-   **Notifications**: Sends a Telegram notification with the status (success or failure) and a summary.
 
-**Dependencies:** `rclone`, `curl`, `notify-send`.
-
-**Rclone SFTP Configuration:**
-This script requires a specific `rclone` remote to connect to your Homelab server. You must add a configuration like the following to your `rclone` configuration file (usually located at `~/.config/rclone/rclone.conf`):
-
-```ini
-[homelab-sftp]
-type = sftp
-host = your_server_ip
-user = your_username
-port = 22
-# shell_type = unix
-# md5sum_command = md5sum
-# sha1sum_command = sha1sum
-```
-Replace `your_server_ip`, `your_username`, and `port` with your server's details.
+**Dependencies:** `rclone`, `curl`, `notify-send`. The remote server must have `python3` installed.
 
 ---
 

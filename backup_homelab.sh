@@ -77,22 +77,33 @@ mount_hdd_if_needed
 # ---------------------------------------------------------
 # PHASE 1 : HDD (MIROIR DU SERVEUR VIA SSH)
 # ---------------------------------------------------------
-echo -e "\n--- 1. Synchronisation HDD (via Rclone SFTP) ---"
+echo -e "\n--- 1. Synchronisation HDD (Mode HTTP Turbo) ---"
 
-# Rclone va télécharger depuis le serveur via SSH/SFTP
-# --transfers=4 : 4 fichiers en parallèle
-# --multi-thread-streams=4 : Découpe les gros fichiers en 4 morceaux pour aller plus vite !
+# 1. On lance un serveur Web temporaire sur le Proxmox via SSH
+# Il servira les fichiers du dossier dump sur le port 8000
+# On utilise 'timeout 1h' pour qu'il se coupe tout seul si le script plante
+echo "🚀 Démarrage du serveur HTTP temporaire sur Proxmox..."
+ssh -f $SERVER_ALIAS "timeout 1h python3 -m http.server 8000 --directory $REMOTE_DIR"
 
-rclone copy "homelab-sftp:/var/lib/vz/dump" "$HDD_DEST_DIR" \
-    --transfers=8 \
-    --multi-thread-streams=4 \
+# Petit temps de pause pour laisser le serveur démarrer
+sleep 3
+
+# 2. On utilise Rclone en mode HTTP (Téléchargement pur)
+# On configure un remote 'à la volée' sans modifier le fichier config
+RCLONE_HTTP_REMOTE=":http,url='http://kpihx-labs:8000':" 
+
+echo "📥 Téléchargement haute vitesse..."
+rclone copy "$RCLONE_HTTP_REMOTE" "$HDD_DEST_DIR" \
+    --transfers=4 \
     --buffer-size=64M \
-    --sftp-chunk-size=256k \
-    --sftp-concurrency=8 \
     --progress \
     --size-only \
     --exclude "*.log" \
     --exclude "*.notes"
+
+# 3. On tue le serveur Web distant (Ménage)
+echo "🛑 Arrêt du serveur HTTP..."
+ssh $SERVER_ALIAS "pkill -f 'python3 -m http.server 8000'"
 
 if [ $? -ne 0 ]; then
     alert "ERROR" "Échec du téléchargement Rclone depuis le serveur."
