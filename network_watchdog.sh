@@ -1,10 +1,11 @@
 #!/bin/bash
+source .env
 
 # ==============================================================================
 # 1. CONFIGURATION
 # ==============================================================================
-TELEGRAM_TOKEN="8589111784:AAFV4UaVOo7-zXcn0df-KwNjKY3t7NhIAXw"
-CHAT_ID="1397540599"
+TELEGRAM_TOKEN="$TELEGRAM_TOKEN"
+CHAT_ID="$CHAT_ID"
 
 # Interfaces & Cibles
 IF_WAN="vmbr0"
