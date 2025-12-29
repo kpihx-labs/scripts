@@ -77,22 +77,25 @@ mount_hdd_if_needed
 # ---------------------------------------------------------
 # PHASE 1 : HDD (MIROIR DU SERVEUR VIA SSH)
 # ---------------------------------------------------------
-echo -e "\n--- 1. Synchronisation HDD ---"
+echo -e "\n--- 1. Synchronisation HDD (via Rclone SFTP) ---"
 
-# On récupère les fichiers depuis le serveur vers le HDD local
-# Changements :
-# -c aes128-gcm@openssh.com : Algorithme de chiffrement le plus rapide (accélération matérielle)
-# --whole-file : On ne calcule pas les deltas (inutile sur des archives compressées), on envoie tout direct.
-# --inplace : Écrit directement sur le fichier de destination (évite la copie temporaire)
+# Rclone va télécharger depuis le serveur via SSH/SFTP
+# --transfers=4 : 4 fichiers en parallèle
+# --multi-thread-streams=4 : Découpe les gros fichiers en 4 morceaux pour aller plus vite !
 
-rsync -av --progress --partial --size-only --inplace --whole-file \
-    -e "ssh -T -c aes128-gcm@openssh.com -o Compression=no -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10" \
-    --exclude '*.log' \
-    --exclude '*.notes' \
-    $SERVER_ALIAS:$REMOTE_DIR/ "$HDD_DEST_DIR/"
+rclone copy "homelab-sftp:/var/lib/vz/dump" "$HDD_DEST_DIR" \
+    --transfers=8 \
+    --multi-thread-streams=4 \
+    --buffer-size=64M \
+    --sftp-chunk-size=256k \
+    --sftp-concurrency=8 \
+    --progress \
+    --size-only \
+    --exclude "*.log" \
+    --exclude "*.notes"
 
 if [ $? -ne 0 ]; then
-    alert "ERROR" "Échec du téléchargement rsync vers HDD."
+    alert "ERROR" "Échec du téléchargement Rclone depuis le serveur."
     exit 1
 fi
 

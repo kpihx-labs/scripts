@@ -12,8 +12,7 @@ These scripts are designed to handle various automated tasks such as backups, sy
 
 Ensure you have the following tools installed on your system:
 
--   `rsync`
--   `rclone` (for cloud backups)
+-   `rclone` (for both server and cloud transfers)
 -   `curl` (for Telegram notifications)
 -   `ssh` client
 -   `notify-send` (optional, for desktop notifications)
@@ -50,17 +49,32 @@ This section describes the available scripts. The configurations are done inside
 
 ### 📥 `backup_homelab.sh`
 
-This script performs a multi-destination backup of Proxmox virtual machine dumps.
+This script performs a multi-destination backup of Proxmox virtual machine dumps using `rclone`.
 
 **Features:**
--   Connects to the Proxmox server via SSH.
--   Creates a mirror of the remote backup directory (`/var/lib/vz/dump`) to a local external HDD using `rsync`.
+-   Connects to the Proxmox server via SFTP using a pre-configured `rclone` remote.
+-   Creates a mirror of the remote backup directory (`/var/lib/vz/dump`) to a local external HDD. This transfer is optimized for speed with multi-threading.
 -   Keeps only the 2 most recent backup archives on the HDD to save space.
--   Uploads the latest backup archive from the HDD to a cloud storage provider using `rclone`.
+-   Uploads the latest backup archive from the HDD to a cloud storage provider (e.g., Google Drive) using `rclone`.
 -   Cleans the cloud directory, ensuring only the very last backup is stored.
 -   Sends a Telegram notification with the status (success or failure) and a summary.
 
-**Dependencies:** `rsync`, `rclone`, `curl`, `notify-send`.
+**Dependencies:** `rclone`, `curl`, `notify-send`.
+
+**Rclone SFTP Configuration:**
+This script requires a specific `rclone` remote to connect to your Homelab server. You must add a configuration like the following to your `rclone` configuration file (usually located at `~/.config/rclone/rclone.conf`):
+
+```ini
+[homelab-sftp]
+type = sftp
+host = your_server_ip
+user = your_username
+port = 22
+# shell_type = unix
+# md5sum_command = md5sum
+# sha1sum_command = sha1sum
+```
+Replace `your_server_ip`, `your_username`, and `port` with your server's details.
 
 ---
 
