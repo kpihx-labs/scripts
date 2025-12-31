@@ -12,13 +12,11 @@ These scripts are designed to handle various automated tasks such as backups, sy
 
 Ensure you have the following tools installed on your system:
 
--   `rclone` (for both server and cloud transfers)
+-   `rsync`
+-   `rclone` (for cloud backups)
 -   `curl` (for Telegram notifications)
 -   `ssh` client
 -   `notify-send` (optional, for desktop notifications)
-
-**On the remote server:**
--   `python3` (for the temporary HTTP server)
 
 ### Installation
 
@@ -46,60 +44,113 @@ Ensure you have the following tools installed on your system:
 
 ## Scripts
 
-This section describes the available scripts. The configurations are done inside each script file.
+This repository is organized into three main categories of scripts.
 
 ---
 
-### 📥 `backup_homelab.sh`
+## 🔌 Network Configuration
 
-This script performs a multi-destination backup of Proxmox virtual machine dumps using an optimized `rclone` HTTP transfer method.
+This group of scripts and configuration files manages the server's network connectivity, allowing dynamic switching between wired and Wi-Fi networks that require specific authentication methods.
+
+### `network_switch.sh`
+
+This is the main script for managing network connections. It dynamically changes the server's network configuration by modifying the `/etc/network/interfaces` file.
+
+**Usage:**
+```bash
+sudo ./network_switch.sh [wifi|wired]
+```
 
 **Features:**
--   **HTTP Turbo Transfer**: Instead of SFTP, the script initiates a temporary `python3` web server on the remote Proxmox host via SSH.
--   **On-the-fly Rclone Remote**: It then uses an in-line `rclone` HTTP remote to download the files at high speed, without requiring any prior `rclone` configuration for the source.
--   **Automatic Cleanup**: The temporary web server on the remote host is automatically terminated after the transfer is complete.
--   **Local Rotation**: Keeps only the 2 most recent backup archives on the local HDD to save space.
--   **Cloud Sync**: Uploads the latest backup archive from the HDD to a cloud storage provider (e.g., Google Drive) using a standard, pre-configured `rclone` remote.
--   **Cloud Rotation**: Cleans the cloud directory, ensuring only the very last backup is stored.
--   **Notifications**: Sends a Telegram notification with the status (success or failure) and a summary.
+-   **`wifi` mode:** Activates the Wi-Fi connection (wlo1), configured for the Eduroam network. It uses the configuration defined in `interfaces/interfaces.wifi`. This setup also establishes a NAT for containers through the Wi-Fi interface.
+-   **`wired` mode:** Activates the wired connection (nic1), configured for the university's network using 802.1X. It uses the configuration from `interfaces/interfaces.wired`.
+-   Sends a Telegram notification to confirm the switch and displays the new IP address.
+-   Creates a backup of the old `interfaces` file and can restore it if the network restart fails.
 
-**Dependencies:** `rclone`, `curl`, `notify-send`. The remote server must have `python3` installed.
+### Configuration Files
+
+#### `interfaces/` directory
+This directory holds the template files for `/etc/network/interfaces`:
+-   `interfaces.wifi`: Defines the network setup for Wi-Fi (DHCP on `wlo1` with `wpa_supplicant`) and creates a NAT bridge for containers.
+-   `interfaces.wired`: Defines the network setup for a wired 802.1X connection (on `nic1`) and bridges it for use by containers.
+
+#### `network.conf.d/` directory
+This directory contains the `wpa_supplicant` configurations needed for authentication:
+-   `eduroam.conf`: Configuration for the `eduroam` Wi-Fi network (EAP-TTLS/PAP). It is used by `interfaces.wifi`.
+-   `polytechnique.conf`: Configuration for the wired network of École Polytechnique, which uses 802.1X authentication. It is used by `interfaces.wired`.
+
+### `setup_eduroam.sh`
+
+A helper script to automate the configuration of the `eduroam.conf` file.
+
+**Features:**
+-   It runs the `eduroam-linux-Ecole_Polytechnique-Ecole_polytechnique.py` script.
+-   It passes the user's credentials to the Python script to generate the WPA supplicant configuration.
+-   It then installs the certificate and configuration file in the correct system locations.
+
+**Underlying Script:**
+-   `eduroam-linux-Ecole_Polytechnique-Ecole_polytechnique.py`: A standard script provided by the Eduroam CAT (Configuration Assistant Tool), tailored for École Polytechnique.
 
 ---
 
-### 🧹 `maintenance.sh`
+## 🛠️ System Administration & Monitoring
 
-A script for performing routine weekly maintenance on a Debian-based server (like Proxmox).
+These scripts handle the server's routine maintenance, monitoring, and status notifications.
+
+### `network_watchdog.sh`
+
+A crucial script that constantly monitors the server's internet connection and attempts to automatically repair it if it fails.
 
 **Features:**
--   Sends a Telegram notification at the start and end of the maintenance.
--   Updates all system packages (`apt-get update`, `dist-upgrade`).
--   Cleans up unused packages and local caches (`autoremove`, `autoclean`).
--   Triggers a Docker system prune command on a specific container (`pct exec`) to free up disk space.
--   Reboots the server upon successful completion.
+-   **Dynamic Detection:** Automatically detects if the server is in `WIFI` or `WIRED` mode by inspecting `/etc/network/interfaces`.
+-   **Host Monitoring:** Pings a reliable external target to check for connectivity.
+-   **Automated Repair Sequence:** If the host is offline, it triggers a series of actions, from a simple interface reset to a full networking service restart. The actions are adapted to the current network mode (Wi-Fi or Wired).
+-   **Container Monitoring:** If the host is online but a specific LXC container is not, it reboots the container.
+-   **IP Change Notifications:** Sends a Telegram message when the server's public IP address changes.
+-   **Locking:** Prevents multiple repair instances from running simultaneously.
+
+### `maintenance.sh`
+
+Performs weekly maintenance tasks on the server.
+
+**Features:**
+-   Sends start and end notifications via Telegram.
+-   Updates all system packages using `apt-get`.
+-   Cleans up old packages and caches.
+-   Prunes the Docker system of a specified container to free up space.
+-   Reboots the server after completion.
 
 **Intended Usage:**
-This script is designed to be run automatically, for example, via a weekly `cron` job.
+Designed to be run as a weekly `cron` job.
+
+### `boot_notify.sh`
+
+A simple script to notify you when the server has successfully booted up.
+
+**Features:**
+-   Waits for an active internet connection.
+-   Sends a "Server Online" message via Telegram.
+
+**Intended Usage:**
+Designed to be run at boot time via a `@reboot` cron job or a systemd service.
 
 ---
 
-### 🌐 `network_watchdog.sh`
+## 💻 Client-Side Scripts
 
-A watchdog script to monitor and repair network connectivity for the host and a specific Proxmox container (LXC).
+This category contains scripts that are meant to be run from a client machine, not on the server itself.
+
+### `backup_homelab.sh`
+
+This script manages the backup of Proxmox VE virtual machine dumps from a client machine (e.g., a laptop).
 
 **Features:**
--   Periodically checks the host's internet connection by pinging a reliable target (`8.8.8.8`).
--   If the host is offline, it triggers a sequence of repair actions:
-    1.  Restarts network interfaces.
-    2.  Renews the DHCP lease.
-    3.  Resets the `wpa_supplicant`.
-    4.  Restarts the system networking service.
--   Checks the internet connectivity of a specified container. If the container is offline while the host is online, it reboots the container.
--   Sends Telegram notifications for status changes (network down, network repaired, container rebooted).
--   Tracks public IP address changes and sends a notification when a new IP is assigned.
-
-**Intended Usage:**
-This script is designed to be run at frequent intervals (e.g., every 5 minutes) via a `cron` job to ensure high availability.
+-   **Client-Side Execution:** Connects to the Proxmox server via SSH to access the backups.
+-   **Multi-Destination Backup:**
+    1.  **Local HDD:** Mirrors the remote backup directory (`/var/lib/vz/dump`) to a locally connected external hard drive using `rsync`. It also performs rotation, keeping only the two most recent backups.
+    2.  **Cloud Storage:** Uploads the very latest backup from the local HDD to a cloud provider (configured with `rclone`).
+-   **Cloud Cleanup:** Ensures only the single latest backup is kept in the cloud to save space.
+-   **Rich Notifications:** Sends detailed success or failure messages to Telegram, including the size of the uploaded backup.
 
 ## License
 

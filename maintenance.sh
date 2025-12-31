@@ -1,8 +1,10 @@
 #!/bin/bash
+
+cd "$(dirname "$0")" || exit 1
 source .env
 
 # ==============================================================================
-# CONFIGURATION
+# 1. CONFIGURATION & AUTO-DÉTECTION
 # ==============================================================================
 TELEGRAM_TOKEN="$TELEGRAM_TOKEN"
 CHAT_ID="$CHAT_ID"
@@ -35,7 +37,7 @@ send_telegram "Début de la maintenance automatique (Mises à jour + Nettoyage).
 # 1. MISE À JOUR SYSTÈME (Debian/Proxmox)
 log "Update & Upgrade APT..."
 apt-get update >> "$LOG_FILE" 2>&1
-apt-get dist-upgrade -y >> "$LOG_FILE" 2>&1
+apt-get upgrade -y >> "$LOG_FILE" 2>&1
 apt-get autoremove -y >> "$LOG_FILE" 2>&1
 apt-get autoclean >> "$LOG_FILE" 2>&1
 

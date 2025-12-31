@@ -1,23 +1,21 @@
 #!/bin/bash
+
+cd "$(dirname "$0")"
 source .env
 
 # ==============================================================================
-# 1. CONFIGURATION
+# 1. CONFIGURATION & AUTO-DÉTECTION
 # ==============================================================================
 TELEGRAM_TOKEN="$TELEGRAM_TOKEN"
 CHAT_ID="$CHAT_ID"
 
-# Interfaces & Cibles
-IF_WAN="vmbr0"
-IF_PHY="nic1"
+# Cibles & Chemins
 TARGET="8.8.8.8"
 CT_ID="100"
-
-# Chemins Absolus (VITAL POUR CRON)
 PCT_CMD="/usr/sbin/pct"
 PING_CMD="/usr/bin/ping"
 
-# Fichiers
+# Fichiers d'état
 STATE_DIR="/var/lib/homelab_watchdog"
 LAST_IP_FILE="$STATE_DIR/last_ip"
 LOG_FILE="/var/log/network_watchdog.log"
@@ -25,22 +23,36 @@ LOCK_FILE="/tmp/network_fixing.lock"
 
 mkdir -p "$STATE_DIR"
 
+# --- DÉTECTION DU MODE RÉSEAU (Le Cerveau) ---
+# On regarde si wlo1 est configuré en DHCP dans le fichier interfaces actif
+if grep -q "^iface wlo1 inet dhcp" /etc/network/interfaces; then
+    MODE="WIFI"
+    IF_WAN="wlo1"       # L'interface qui porte l'IP publique
+    IF_PHY="wlo1"       # L'interface physique à reset
+    WPA_CONF="/etc/wpa_supplicant/eduroam.conf"
+    WPA_DRIVER="nl80211"
+else
+    MODE="WIRED"
+    IF_WAN="vmbr0"      # Le bridge porte l'IP
+    IF_PHY="nic1"       # La carte physique porte le lien
+    WPA_CONF="/etc/wpa_supplicant/polytechnique.conf"
+    WPA_DRIVER="wired"
+fi
+
 # ==============================================================================
 # 2. FONCTIONS
 # ==============================================================================
 
 log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [$MODE] - $1" >> "$LOG_FILE"
 }
 
 send_telegram() {
     ICON="$1"
     TITLE="$2"
     MESSAGE="$3"
-    # On force le texte vide si pas de message pour éviter erreur curl
     if [ -z "$MESSAGE" ]; then MESSAGE="Notification système"; fi
-    
-    TEXT="$ICON **$TITLE** $ICON%0A%0A$MESSAGE"
+    TEXT="$ICON **$TITLE ($MODE)** $ICON%0A%0A$MESSAGE"
     
     curl -s --max-time 10 -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" \
         -d chat_id="$CHAT_ID" \
@@ -55,10 +67,12 @@ get_current_ip() {
 # 3. VERROU ANTI-DOUBLON
 # ==============================================================================
 if [ -f "$LOCK_FILE" ]; then
+    # Si le verrou a plus de 15 minutes, on le casse
     if [ $(find "$LOCK_FILE" -mmin +15) ]; then
         log "⚠️ Verrou expiré supprimé."
         rm "$LOCK_FILE"
     else
+        # Une réparation est déjà en cours, on ne fait rien
         exit 0
     fi
 fi
@@ -68,76 +82,71 @@ fi
 # ==============================================================================
 
 HOST_OK=false
-
-if ping -c 3 -W 5 "$TARGET" > /dev/null 2>&1; then
+# Test de connectivité simple
+if $PING_CMD -c 1 -W 5 "$TARGET" > /dev/null 2>&1; then
     HOST_OK=true
 else
-    # --- RÉPARATION HÔTE ---
+    # --- DÉBUT DU PROTOCOLE DE RÉPARATION ---
     touch "$LOCK_FILE"
-    log "- Hôte déconnecté. Début du protocole de réparation..."
+    log "🔻 Hôte déconnecté sur $IF_WAN. Début réparation..."
 
+    # Fix AppArmor (Spécifique à ton système FrankenDebian)
     if [ -f /etc/apparmor.d/sbin.dhclient ]; then
     	ln -sf /etc/apparmor.d/sbin.dhclient /etc/apparmor.d/disable/
-    	apparmor_parser -R /etc/apparmor.d.sbin.dhclient 2>/dev/null || true
+    	apparmor_parser -R /etc/apparmor.d/sbin.dhclient 2>/dev/null || true
     fi
 
+    # Nettoyage processus fantômes
     killall dhclient 2>/dev/null || true
     killall wpa_supplicant 2>/dev/null || true
 
-    log "Action 0: Cycle interfaces..."
-    # Action 0 : Simple réveil
-    ip link set "$IF_WAN" down
+    # --- ACTION 0 : Cycle Interface (Soft) ---
+    log "Action 0: Cycle interfaces $IF_PHY..."
+    ip link set "$IF_WAN" down 2>/dev/null
     ip link set "$IF_PHY" down
     sleep 2
     ip link set "$IF_PHY" up
     sleep 2
-    ip link set "$IF_WAN" up
+    # En wired, on remonte aussi le bridge
+    if [ "$MODE" == "WIRED" ]; then ip link set "$IF_WAN" up; fi
     sleep 5
 
-    if ping -c 1 "$TARGET" > /dev/null 2>&1; then
-        log "+ Hôte réparé (simple réveil d'interfaces)"
-        send_telegram "✅" "HÔTE RÉPARÉ" "Simple réveil d'interface."
+    if $PING_CMD -c 1 "$TARGET" > /dev/null 2>&1; then
+        log "✅ Hôte réparé (Action 0)"
+        send_telegram "✅" "RÉSEAU RÉTABLI" "Simple réveil d'interface."
         HOST_OK=true
     else
-        log "Action 1: DHCP...."
-        # Action 1 : DHCP
-        dhclient -r -v "$IF_WAN" > /dev/null 2>&1
+        # --- ACTION 1 : WPA Supplicant + DHCP (Hard) ---
+        log "Action 1: Relance WPA ($WPA_DRIVER) & DHCP..."
+        
+        # Lancement WPA avec les bons paramètres dynamiques
+        wpa_supplicant -B -i "$IF_PHY" -c "$WPA_CONF" -D "$WPA_DRIVER"
+        
+        # Attente plus longue en Wi-Fi pour l'association
+        if [ "$MODE" == "WIFI" ]; then sleep 20; else sleep 15; fi
+        
+        # Demande IP
         dhclient -v "$IF_WAN" > /dev/null 2>&1
-        sleep 5
+        sleep 7
 
-        if ping -c 1 "$TARGET" > /dev/null 2>&1; then
+        if $PING_CMD -c 1 "$TARGET" > /dev/null 2>&1; then
             HOST_OK=true
-            log "+ Hôte réparé (via Network DHCP)"
-            send_telegram "✅" "HÔTE RÉPARÉ" "Via DHCP."
+            log "✅ Hôte réparé (Action 1)"
+            send_telegram "🛡️" "RÉSEAU RÉTABLI" "Relance WPA/DHCP réussie."
         else
-            log "Action 2: WPA Reset..."
-            # Action 2 : WPA Reset
+            # --- ACTION 2 : Restart Systemd (Nuclear) ---
+            log "Action 2: Restart system networking..."
+            
+            killall wpa_supplicant 2>/dev/null || true
             killall dhclient 2>/dev/null || true
-            ip link set "$IF_PHY" down
-            sleep 2
-            ip link set "$IF_PHY" up
-            wpa_supplicant -B -i "$IF_PHY" -c /etc/wpa_supplicant/polytechnique.conf -D wired
-            sleep 15
-            dhclient -v "$IF_WAN" > /dev/null 2>&1
+            
+            systemctl restart networking
+            sleep 20 # Le wifi met du temps à revenir
 
-            if ping -c 1 "$TARGET" > /dev/null 2>&1; then
+            if $PING_CMD -c 1 "$TARGET" > /dev/null 2>&1; then
+                log "✅ Hôte réparé (Action 2)"
+                send_telegram "☢️" "RÉSEAU RÉTABLI" "Restart service networking complet."
                 HOST_OK=true
-                log "+ Hôte réparé (via Network reset WPA)"
-                send_telegram "🛡️" "HÔTE RÉPARÉ" "Via Reset WPA."
-            else
-                log "Action 3: Restart system networking..."
-                killall wpa_supplicant 2>/dev/null || true
-                killall dhclient 2>/dev/null || true
-
-                systemctl restart networking
-                sleep 20
-
-                if ping -c 1 "$TARGET" > /dev/null 2>&1; then
-                    log "+ Hôte réparé (via Network reset)"
-                    send_telegram "✅" "HÔTE RÉPARÉ" "Network reset"
-                    HOST_OK=true
-                fi
-
             fi
         fi
     fi
@@ -145,66 +154,55 @@ else
 fi
 
 if [ "$HOST_OK" = false ]; then
-    log "- Échec Hôte."
+    log "❌ Échec total réparation Hôte."
     exit 1
 fi
 
-# --- Suivi IP ---
+# --- Suivi IP (Notification en cas de changement) ---
 CURRENT_IP=$(get_current_ip)
 if [ -f "$LAST_IP_FILE" ]; then LAST_IP=$(cat "$LAST_IP_FILE"); else LAST_IP="Inconnue"; fi
+
 if [ -n "$CURRENT_IP" ] && [ "$CURRENT_IP" != "$LAST_IP" ]; then
     echo "$CURRENT_IP" > "$LAST_IP_FILE"
-    if [[ "$CURRENT_IP" != 192.168* ]]; then
-        send_telegram "🔄" "INFO IP" "Nouvelle IP : \`$CURRENT_IP\`"
+    # On ignore les IP privées Docker ou vides
+    if [[ "$CURRENT_IP" != 192.168* ]] && [[ "$CURRENT_IP" != 10.* ]]; then
+        send_telegram "🔄" "NOUVELLE IP" "Interface $IF_WAN : \`$CURRENT_IP\`"
     fi
 fi
 
 # ==============================================================================
-# 5. CONTENEUR : VÉRIFICATION PROFONDE (PCT)
+# 5. CONTENEUR : VÉRIFICATION PROFONDE
 # ==============================================================================
-# Utilisation de chemins absolus pour éviter "command not found"
 
 # A. Le conteneur tourne-t-il ?
 CT_STATUS=$($PCT_CMD status $CT_ID)
 
 if [[ $CT_STATUS != *"running"* ]]; then
-    log "⚠️ Conteneur $CT_ID éteint."
-    send_telegram "⚠️" "CONTENEUR ÉTEINT" "Démarrage en cours..."
-    
+    log "⚠️ Conteneur $CT_ID éteint. Redémarrage..."
     $PCT_CMD start $CT_ID
-    sleep 15 # On laisse le temps au réseau de monter
+    sleep 15
 fi
 
 # B. Le conteneur a-t-il internet ?
-# On utilise le ping simple (sans option w/W) pour compatibilité maximale
 if ! $PCT_CMD exec $CT_ID -- ping -c 1 "$TARGET" > /dev/null 2>&1; then
     touch "$LOCK_FILE"
-    log "🟠 Hôte OK mais Conteneur déconnecté."
-    send_telegram "🛠️" "PANNE CONTENEUR" "Le serveur a internet, mais le Docker-Host ne ping pas google.%0ADébut de la réparation..."
-
-    # --- RÉPARATION ---
+    log "🟠 Hôte OK mais Conteneur $CT_ID déconnecté."
     
-    # 1. Vérification pont interne
+    # En mode Wi-Fi, le NAT est géré par IPTables, on vérifie vmbr1
     ip link set vmbr1 up
     
-    # 2. Redémarrage violent du conteneur (seule façon de re-clipser le réseau)
-    log "Reboot conteneur $CT_ID..."
+    # Redémarrage du conteneur pour forcer la reprise du réseau
     $PCT_CMD stop $CT_ID
     sleep 5
     $PCT_CMD start $CT_ID
-    
-    # Attente longue (pour que Docker et le réseau s'initialisent)
     sleep 20
     
-    # --- VÉRIFICATION FINALE ---
     if $PCT_CMD exec $CT_ID -- ping -c 1 "$TARGET" > /dev/null 2>&1; then
         log "✅ Conteneur reconnecté."
-        send_telegram "🐳" "CONTENEUR RÉTABLI" "Redémarrage effectué avec succès.%0AAccès internet OK."
+        send_telegram "🐳" "CONTENEUR RÉTABLI" "Le Docker-Host a retrouvé internet."
     else
         log "❌ Échec réparation Conteneur."
-        send_telegram "💀" "ÉCHEC CONTENEUR" "Malgré le redémarrage, le conteneur n'a pas internet.%0AVérifie le pont vmbr1 manuellement."
     fi
-    
     rm "$LOCK_FILE"
 fi
 

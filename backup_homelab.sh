@@ -1,4 +1,7 @@
 #!/bin/bash
+
+cd "$(dirname "$0")"
+
 source .env
 
 # ==============================================================================
@@ -77,36 +80,22 @@ mount_hdd_if_needed
 # ---------------------------------------------------------
 # PHASE 1 : HDD (MIROIR DU SERVEUR VIA SSH)
 # ---------------------------------------------------------
-echo -e "\n--- 1. Synchronisation HDD (Mode HTTP Turbo) ---"
+echo -e "\n--- 1. Synchronisation HDD ---"
 
-# 1. On lance un serveur Web temporaire sur le Proxmox via SSH
-# Il servira les fichiers du dossier dump sur le port 8000
-# On utilise 'timeout 1h' pour qu'il se coupe tout seul si le script plante
-echo "🚀 Démarrage du serveur HTTP temporaire sur Proxmox..."
-ssh -f $SERVER_ALIAS "timeout 1h python3 -m http.server 8000 --directory $REMOTE_DIR"
+# On récupère les fichiers depuis le serveur vers le HDD local
+# Changements :
+# -c aes128-gcm@openssh.com : Algorithme de chiffrement le plus rapide (accélération matérielle)
+# --whole-file : On ne calcule pas les deltas (inutile sur des archives compressées), on envoie tout direct.
+# --inplace : Écrit directement sur le fichier de destination (évite la copie temporaire)
 
-# Petit temps de pause pour laisser le serveur démarrer
-sleep 3
-
-# 2. On utilise Rclone en mode HTTP (Téléchargement pur)
-# On configure un remote 'à la volée' sans modifier le fichier config
-RCLONE_HTTP_REMOTE=":http,url='http://kpihx-labs:8000':" 
-
-echo "📥 Téléchargement haute vitesse..."
-rclone copy "$RCLONE_HTTP_REMOTE" "$HDD_DEST_DIR" \
-    --transfers=4 \
-    --buffer-size=64M \
-    --progress \
-    --size-only \
-    --exclude "*.log" \
-    --exclude "*.notes"
-
-# 3. On tue le serveur Web distant (Ménage)
-echo "🛑 Arrêt du serveur HTTP..."
-ssh $SERVER_ALIAS "pkill -f 'python3 -m http.server 8000'"
+rsync -av --progress --partial --size-only --inplace --whole-file \
+    -e "ssh -T -c aes128-gcm@openssh.com -o Compression=no -o ServerAliveInterval=60 -o ServerAliveCountMax=10 -o ConnectTimeout=10" \
+    --exclude '*.log' \
+    --exclude '*.notes' \
+    $SERVER_ALIAS:$REMOTE_DIR/ "$HDD_DEST_DIR/"
 
 if [ $? -ne 0 ]; then
-    alert "ERROR" "Échec du téléchargement Rclone depuis le serveur."
+    alert "ERROR" "Échec du téléchargement rsync vers HDD."
     exit 1
 fi
 
