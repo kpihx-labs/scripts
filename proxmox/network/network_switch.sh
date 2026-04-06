@@ -2,7 +2,7 @@
 
 cd "$(dirname "$0")" || exit 1
 # Chargement de la configuration
-source .env
+[ -f .env ] && source .env
 
 # ==============================================================================
 # 1. CONFIGURATION
@@ -35,7 +35,7 @@ send_telegram() {
     
     local text="$icon **$title** $icon%0A%0A$message"
     
-    curl -s --max-time 10 -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" \
+    curl -s --max-time 10 -X POST "https://api.telegram.org/bot$TELEGRAM_HOMELAB_TOKEN/sendMessage" \
         -d chat_id="$CHAT_ID" \
         -d text="$text" \
         -d parse_mode="Markdown" > /dev/null 2>&1

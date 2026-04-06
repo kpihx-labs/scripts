@@ -2,15 +2,13 @@
 
 cd "$(dirname "$0")"
 
-source .env
+# Source the Homelab universal library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+source "$SCRIPT_DIR/../lib/notifier.sh"
 
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
-
-# --- TELEGRAM ---
-TELEGRAM_TOKEN="$TELEGRAM_TOKEN"
-CHAT_ID="$CHAT_ID"
 
 # --- SERVEUR (SOURCE) ---
 SERVER_ALIAS="homelab"
@@ -18,13 +16,11 @@ REMOTE_DIR="/var/lib/vz/dump"
 
 # --- HDD EXTERNE (DESTINATION 1) ---
 HDD_MOUNT_POINT="/media/kpihx/KpihX-Backup"
-HDD_DEST_DIR="$HDD_MOUNT_POINT/Backups_Homelab"
+HDD_DEST_DIR="$HDD_MOUNT_POINT/Homelab/Backups/Docker_Host"
 
 # --- CLOUD RCLONE (DESTINATION 2) ---
-# Nom du remote configuré dans 'rclone config'
-RCLONE_REMOTE="gdrive-full"
-# Nom du dossier sur Google Drive
-RCLONE_FOLDER="Backup_Homelab"
+RCLONE_REMOTE="gdrive-x"
+RCLONE_FOLDER="Homelab/Backups/Docker_Host"
 RCLONE_DEST="$RCLONE_REMOTE:$RCLONE_FOLDER"
 
 NOW=$(date +"%Y-%m-%d %H:%M:%S")
@@ -33,37 +29,20 @@ NOW=$(date +"%Y-%m-%d %H:%M:%S")
 # FONCTIONS
 # ==============================================================================
 
-alert() {
-    TYPE="$1"
-    MESSAGE="$2"
-    
-    # Notification Bureau
-    notify-send "Backup Homelab [$TYPE]" "$MESSAGE" 2>/dev/null
-    
-    case $TYPE in
-        "SUCCESS") ICON="✅" ;;
-        "ERROR")   ICON="❌" ;;
-        "WARN")    ICON="⚠️" ;;
-        *)         ICON="ℹ️" ;;
-    esac
-    
-    # Notification Telegram
-    curl -s --max-time 10 -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" \
-        -d chat_id="$CHAT_ID" \
-        -d text="$ICON **BACKUP** $ICON%0A%0A$MESSAGE" \
-        -d parse_mode="Markdown" > /dev/null
-}
+# ==============================================================================
+# EXÉCUTION
+# ==============================================================================
 
 check_ssh() {
     if ! ssh -q -o ConnectTimeout=5 $SERVER_ALIAS exit; then
-        alert "ERROR" "Serveur injoignable via SSH."
+        homelab_notify "ERROR" "Serveur injoignable via SSH." "BACKUP"
         exit 1
     fi
 }
 
 mount_hdd_if_needed() {
     if [ ! -d "$HDD_MOUNT_POINT" ]; then
-        alert "ERROR" "HDD non monté à : $HDD_MOUNT_POINT"
+        homelab_notify "ERROR" "HDD non monté à : $HDD_MOUNT_POINT" "BACKUP"
         exit 1
     fi
     mkdir -p "$HDD_DEST_DIR"
@@ -95,7 +74,7 @@ rsync -av --progress --partial --size-only --inplace --whole-file \
     $SERVER_ALIAS:$REMOTE_DIR/ "$HDD_DEST_DIR/"
 
 if [ $? -ne 0 ]; then
-    alert "ERROR" "Échec du téléchargement rsync vers HDD."
+    homelab_notify "ERROR" "Échec du téléchargement rsync vers HDD." "BACKUP"
     exit 1
 fi
 
@@ -125,7 +104,7 @@ echo -e "\n--- 3. Sync Google Drive (Rclone) ---"
 LATEST_ARCHIVE=$(ls -t "$HDD_DEST_DIR"/*.zst "$HDD_DEST_DIR"/*.vma "$HDD_DEST_DIR"/*.tar.gz 2>/dev/null | head -n 1)
 
 if [ -z "$LATEST_ARCHIVE" ]; then
-    alert "WARN" "Aucune archive trouvée sur le HDD pour le Cloud."
+    homelab_notify "WARN" "Aucune archive trouvée sur le HDD pour le Cloud." "BACKUP"
 else
     ARCHIVE_NAME=$(basename "$LATEST_ARCHIVE")
 
@@ -154,9 +133,9 @@ else
         done
         
         SIZE=$(du -sh "$LATEST_ARCHIVE" | cut -f1)
-        alert "SUCCESS" "Backup terminé !%0AHDD : OK (Miroir)%0ACloud : Uploadé ($SIZE)"
+        homelab_notify "SUCCESS" "Backup terminé !%0AHDD : OK (Miroir)%0ACloud : Uploadé ($SIZE)" "BACKUP"
     else
-        alert "ERROR" "Erreur upload Rclone vers Google Drive."
+        homelab_notify "ERROR" "Erreur upload Rclone vers Google Drive." "BACKUP"
     fi
 fi
 

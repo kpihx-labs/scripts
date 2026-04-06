@@ -1,0 +1,69 @@
+#!/bin/bash
+set -euo pipefail
+
+# hsh — KpihX Homelab Dispatcher (Phoenix v3.1)
+# Centralizes homelab administration tasks (backup, maintenance, status).
+# Inspired by ksh.
+
+ROOT=$(dirname "$(realpath "$0")")
+
+usage() {
+    echo "Usage: hsh <module> [target] | hsh status"
+    echo ""
+    echo "Modules:"
+    echo "  backup host       - Local pull of Proxmox LXC 100 snapshot"
+    echo "  backup vault      - Local encrypted backup of Vaultwarden (asks for pass)"
+    echo "  maintenance       - Trigger server-side maintenance (apt/docker/reboot)"
+    echo "  install           - Install hsh to ~/.local/bin/hsh"
+    echo ""
+    echo "Special:"
+    echo "  status            - Global Homelab Health Audit"
+}
+
+[[ $# -lt 1 ]] && usage && exit 1
+
+COMMAND=$1
+
+if [[ "$COMMAND" == "status" ]]; then
+    echo "🔍 [hsh] Global Homelab Audit..."
+    echo "--- 🖥️ PROXMOX (kpihx-labs) ---"
+    ssh -q kpihx-labs "echo 'Disk:' && df -h / && echo '---' && echo 'Latest Watchdog Log:' && tail -n 3 /var/log/network_watchdog.log 2>/dev/null || echo 'No log'" || echo "PVE: Offline"
+    echo ""
+    echo "--- 🐳 DOCKER-HOST ---"
+    ssh -q docker-host "echo 'Disk:' && df -h / && echo '---' && echo 'Latest Vault Backup Log:' && tail -n 3 /var/log/vault-backup.log 2>/dev/null || echo 'No log'" || echo "LXC: Offline"
+    exit 0
+fi
+
+if [[ "$COMMAND" == "install" ]]; then
+    echo "🚀 Installing hsh to ~/.local/bin/hsh..."
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$ROOT/hsh" "$HOME/.local/bin/hsh"
+    chmod +x "$ROOT/hsh"
+    echo "✅ Done. Ensure ~/.local/bin is in your PATH."
+    exit 0
+fi
+
+case "$COMMAND" in
+    backup)
+        SUB=${2:-}
+        if [[ "$SUB" == "host" ]]; then
+            echo "📦 Backing up Docker Host (LXC 100) snapshot..."
+            "$ROOT/proxmox/backup_docker_host/backup_docker_host_local.sh"
+        elif [[ "$SUB" == "vault" ]]; then
+            echo "🔐 Backing up Vaultwarden (Encrypted)..."
+            "$ROOT/docker_host/backup_vault/backup_vault_local.sh"
+        else
+            echo "❌ Unknown sub-command '$SUB'"; usage; exit 1
+        fi
+        ;;
+    maintenance)
+        echo "🛠️ Triggering server-side maintenance on kpihx-labs..."
+        ssh -t kpihx-labs "sudo /root/proxmox/maintenance.sh"
+        ;;
+    help)
+        usage; exit 0
+        ;;
+    *)
+        echo "❌ Unknown command '$COMMAND'"; usage; exit 1
+        ;;
+esac

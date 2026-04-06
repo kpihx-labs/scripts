@@ -3,13 +3,14 @@
 # On se place dans le dossier du script
 cd "$(dirname "$0")" || exit 1
 
-source .env
+[ -f .env ] && source .env
 
 # ==============================================================================
 # 1. CONFIGURATION & AUTO-DÉTECTION
 # ==============================================================================
-TELEGRAM_TOKEN="$TELEGRAM_TOKEN"
-CHAT_ID="$CHAT_ID"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+source "$SCRIPT_DIR/../lib/notifier.sh"
+
 LOG_FILE="/var/log/boot_notify.log"
 
 echo "$(date) - Démarrage du script de notification..." >> "$LOG_FILE"
@@ -33,8 +34,6 @@ done
 echo "$(date) - Réseau OK. Envoi Telegram..." >> "$LOG_FILE"
 
 # Envoi du message
-/usr/bin/curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" \
-    -d chat_id="$CHAT_ID" \
-    -d text="🚀 **SERVEUR EN LIGNE**%0AJe suis redémarré et connecté !" >> "$LOG_FILE" 2>&1
+homelab_notify "SUCCESS" "🚀 **SERVEUR EN LIGNE**%0AJe suis redémarré et connecté !" "SYSTEM"
 
 echo "$(date) - Terminé." >> "$LOG_FILE"

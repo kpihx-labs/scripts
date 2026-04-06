@@ -1,13 +1,13 @@
 #!/bin/bash
 
 cd "$(dirname "$0")" || exit 1
-source .env
+# Source the Homelab universal library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+source "$SCRIPT_DIR/lib/notifier.sh"
 
 # ==============================================================================
-# 1. CONFIGURATION & AUTO-DÉTECTION
+# CONFIGURATION
 # ==============================================================================
-TELEGRAM_TOKEN="$TELEGRAM_TOKEN"
-CHAT_ID="$CHAT_ID"
 LOG_FILE="/var/log/maintenance.log"
 
 # Proxy (Indispensable pour apt à l'X)
@@ -21,18 +21,11 @@ log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
 }
 
-send_telegram() {
-    MSG="$1"
-    curl -s --max-time 10 -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" \
-        -d chat_id="$CHAT_ID" \
-        -d text="🧹 **MAINTENANCE HEBDOMADAIRE** 🧹%0A%0A$MSG" > /dev/null
-}
-
 # ==============================================================================
 # DÉBUT DU TRAITEMENT
 # ==============================================================================
 log "Démarrage de la maintenance..."
-send_telegram "Début de la maintenance automatique (Mises à jour + Nettoyage)..."
+homelab_notify "CLEAN" "Début de la maintenance automatique (Mises à jour + Nettoyage)..." "MAINTENANCE"
 
 # 1. MISE À JOUR SYSTÈME (Debian/Proxmox)
 log "Update & Upgrade APT..."
@@ -48,7 +41,7 @@ log "Nettoyage Docker sur le conteneur 100..."
 
 # 3. NOTIFICATION FINALE ET REBOOT
 log "Maintenance terminée. Redémarrage..."
-send_telegram "✅ Maintenance terminée.%0A🔄 Le serveur va redémarrer dans 1 minute."
+homelab_notify "SUCCESS" "Maintenance terminée.%0A🔄 Le serveur va redémarrer dans 1 minute." "MAINTENANCE"
 
 # On attend un peu pour que le message Telegram parte
 sleep 5

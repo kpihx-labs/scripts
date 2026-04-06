@@ -1,13 +1,7 @@
 #!/bin/bash
 
-cd "$(dirname "$0")"
-source .env
-
-# ==============================================================================
-# 1. CONFIGURATION & AUTO-DÉTECTION
-# ==============================================================================
-TELEGRAM_TOKEN="$TELEGRAM_TOKEN"
-CHAT_ID="$CHAT_ID"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+source "$SCRIPT_DIR/../lib/notifier.sh"
 
 # Cibles & Chemins
 TARGET="8.8.8.8"
@@ -47,17 +41,6 @@ log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') [$MODE] - $1" >> "$LOG_FILE"
 }
 
-send_telegram() {
-    ICON="$1"
-    TITLE="$2"
-    MESSAGE="$3"
-    if [ -z "$MESSAGE" ]; then MESSAGE="Notification système"; fi
-    TEXT="$ICON **$TITLE ($MODE)** $ICON%0A%0A$MESSAGE"
-    
-    curl -s --max-time 10 -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" \
-        -d chat_id="$CHAT_ID" \
-        -d text="$TEXT" > /dev/null
-}
 
 get_current_ip() {
     ip -4 addr show "$IF_WAN" | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n 1
@@ -113,7 +96,7 @@ else
 
     if $PING_CMD -c 1 "$TARGET" > /dev/null 2>&1; then
         log "✅ Hôte réparé (Action 0)"
-        send_telegram "✅" "RÉSEAU RÉTABLI" "Simple réveil d'interface."
+        homelab_notify "SUCCESS" "Simple réveil d'interface ($MODE)." "RÉSEAU RÉTABLI"
         HOST_OK=true
     else
         # --- ACTION 1 : WPA Supplicant + DHCP (Hard) ---
@@ -132,7 +115,7 @@ else
         if $PING_CMD -c 1 "$TARGET" > /dev/null 2>&1; then
             HOST_OK=true
             log "✅ Hôte réparé (Action 1)"
-            send_telegram "🛡️" "RÉSEAU RÉTABLI" "Relance WPA/DHCP réussie."
+            homelab_notify "SUCCESS" "Relance WPA/DHCP réussie ($MODE)." "RÉSEAU RÉTABLI"
         else
             # --- ACTION 2 : Restart Systemd (Nuclear) ---
             log "Action 2: Restart system networking..."
@@ -145,7 +128,7 @@ else
 
             if $PING_CMD -c 1 "$TARGET" > /dev/null 2>&1; then
                 log "✅ Hôte réparé (Action 2)"
-                send_telegram "☢️" "RÉSEAU RÉTABLI" "Restart service networking complet."
+                homelab_notify "WARN" "Restart service networking complet ($MODE)." "RÉSEAU RÉTABLI"
                 HOST_OK=true
             fi
         fi
@@ -166,7 +149,7 @@ if [ -n "$CURRENT_IP" ] && [ "$CURRENT_IP" != "$LAST_IP" ]; then
     echo "$CURRENT_IP" > "$LAST_IP_FILE"
     # On ignore les IP privées Docker ou vides
     if [[ "$CURRENT_IP" != 192.168* ]] && [[ "$CURRENT_IP" != 10.* ]]; then
-        send_telegram "🔄" "NOUVELLE IP" "Interface $IF_WAN : \`$CURRENT_IP\`"
+        homelab_notify "INFO" "Interface $IF_WAN : \`$CURRENT_IP\` ($MODE)" "NOUVELLE IP"
     fi
 fi
 
@@ -199,7 +182,7 @@ if ! $PCT_CMD exec $CT_ID -- ping -c 1 "$TARGET" > /dev/null 2>&1; then
     
     if $PCT_CMD exec $CT_ID -- ping -c 1 "$TARGET" > /dev/null 2>&1; then
         log "✅ Conteneur reconnecté."
-        send_telegram "🐳" "CONTENEUR RÉTABLI" "Le Docker-Host a retrouvé internet."
+        homelab_notify "SUCCESS" "Le Docker-Host a retrouvé internet ($MODE)." "CONTENEUR RÉTABLI"
     else
         log "❌ Échec réparation Conteneur."
     fi
