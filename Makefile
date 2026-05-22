@@ -22,6 +22,12 @@ backup-vault:
 maintenance:
 	./hsh maintenance
 
-# Install hsh to ~/.local/bin/hsh
+# Install hsh and homelab-bot service
 install:
 	./hsh install
+	@mkdir -p $(HOME)/.config/systemd/user
+	@cp $(CURDIR)/../sentinel/tg-homelab.service $(HOME)/.config/systemd/user/
+	@systemctl --user daemon-reload
+	@systemctl --user enable tg-homelab.service
+	@systemctl --user restart tg-homelab.service
+	@echo "✅ Installed hsh and Homelab Bot service."

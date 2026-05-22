@@ -1,6 +1,6 @@
 #!/bin/bash
 # backup_vault_local.sh - Manual Local Backup of Vaultwarden (run from PC)
-# Pulls vault data from docker-host via SSH, encrypts locally using a key derived
+# Pulls vault data from homelab LXC via SSH, encrypts locally using a key derived
 # from your Bitwarden Master Password (via gen_encrypt_key.sh), and mirrors to HDD + Cloud.
 # The encryption key is NEVER stored on disk — derived live and erased from memory.
 
@@ -10,7 +10,8 @@ source "$SCRIPT_DIR/../lib/notifier.sh"
 set -e
 
 # --- CONFIGURATION ---
-DOCKER_HOST="docker-host"
+# Tailscale/remote: kpihx-cloud. LAN (pve.local): homelab.
+DOCKER_HOST="${DOCKER_HOST:-kpihx-cloud}"
 REMOTE_VAULT_DIR="/var/lib/docker/volumes/vaultwarden_vaultwarden_data/_data"
 HDD_MOUNT_POINT="/media/kpihx/KpihX-Backup"
 HDD_DEST_DIR="$HDD_MOUNT_POINT/Homelab/Backups/Vault"
@@ -22,16 +23,23 @@ KEEP=3  # Number of backups to retain (HDD and Cloud)
 
 # --- Derive encryption key from Bitwarden Master Password (never stored) ---
 SALT="Homelab-Sovereign-Vault-2026-KpihX"
-echo ""
-echo "🔐 Vaultwarden Local Backup — Key Derivation"
-echo "   Key is derived from your Bitwarden Master Password."
-echo "   It will NOT be stored anywhere on disk."
-echo ""
-echo -n "🔑 Enter your Bitwarden Master Password: "
-read -s MASTER_PASS
-echo ""
 
-if [ -z "$MASTER_PASS" ]; then
+# Support non-interactive mode if BW_MASTER_PASSWORD is in env
+if [[ -n "${BW_MASTER_PASSWORD:-}" ]]; then
+    MASTER_PASS="$BW_MASTER_PASSWORD"
+    echo "🔑 Using BW_MASTER_PASSWORD from environment."
+else
+    echo ""
+    echo "🔐 Vaultwarden Local Backup — Key Derivation"
+    echo "   Key is derived from your Bitwarden Master Password."
+    echo "   It will NOT be stored anywhere on disk."
+    echo ""
+    echo -n "🔑 Enter your Bitwarden Master Password: "
+    read -s MASTER_PASS
+    echo ""
+fi
+
+if [[ -z "$MASTER_PASS" ]]; then
     echo "❌ Password cannot be empty."
     exit 1
 fi

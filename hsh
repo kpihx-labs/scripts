@@ -11,7 +11,7 @@ usage() {
     echo "Usage: hsh <module> [target] | hsh status"
     echo ""
     echo "Modules:"
-    echo "  backup host       - Local pull of Proxmox LXC 100 snapshot"
+    echo "  backup host       - Local pull of homelab LXC snapshot (Proxmox)"
     echo "  backup vault      - Local encrypted backup of Vaultwarden (asks for pass)"
     echo "  maintenance       - Trigger server-side maintenance (apt/docker/reboot)"
     echo "  install           - Install hsh to ~/.local/bin/hsh"
@@ -26,11 +26,22 @@ COMMAND=$1
 
 if [[ "$COMMAND" == "status" ]]; then
     echo "🔍 [hsh] Global Homelab Audit..."
-    echo "--- 🖥️ PROXMOX (kpihx-labs) ---"
-    ssh -q kpihx-labs "echo 'Disk:' && df -h / && echo '---' && echo 'Latest Watchdog Log:' && tail -n 3 /var/log/network_watchdog.log 2>/dev/null || echo 'No log'" || echo "PVE: Offline"
+    echo "--- 🖥️ PROXMOX (kpihx-pve) ---"
+    ssh -q -o ConnectTimeout=10 kpihx-pve \
+        "echo 'Disk:' && df -h / && echo '---' && echo 'Latest Watchdog Log:' && tail -n 3 /var/log/network_watchdog.log 2>/dev/null || echo 'No log'" \
+        || echo "PVE: Offline"
     echo ""
-    echo "--- 🐳 DOCKER-HOST ---"
-    ssh -q docker-host "echo 'Disk:' && df -h / && echo '---' && echo 'Latest Vault Backup Log:' && tail -n 3 /var/log/vault-backup.log 2>/dev/null || echo 'No log'" || echo "LXC: Offline"
+    echo "--- 🐳 HOMELAB (LXC) ---"
+    # LAN: Host homelab (ProxyJump pve). Remote/Tailscale: Host kpihx-cloud (ProxyJump kpihx-pve).
+    if ssh -q -o ConnectTimeout=10 homelab \
+        "echo 'Disk:' && df -h / && echo '---' && echo 'Latest Vault Backup Log:' && tail -n 3 /var/log/vault-backup.log 2>/dev/null || echo 'No log'" 2>/dev/null; then
+        :
+    elif ssh -q -o ConnectTimeout=10 kpihx-cloud \
+        "echo 'Disk:' && df -h / && echo '---' && echo 'Latest Vault Backup Log:' && tail -n 3 /var/log/vault-backup.log 2>/dev/null || echo 'No log'"; then
+        :
+    else
+        echo "LXC: Offline (tried homelab, kpihx-cloud)"
+    fi
     exit 0
 fi
 
@@ -47,7 +58,7 @@ case "$COMMAND" in
     backup)
         SUB=${2:-}
         if [[ "$SUB" == "host" ]]; then
-            echo "📦 Backing up Docker Host (LXC 100) snapshot..."
+            echo "📦 Backing up homelab LXC snapshot..."
             "$ROOT/proxmox/backup_docker_host/backup_docker_host_local.sh"
         elif [[ "$SUB" == "vault" ]]; then
             echo "🔐 Backing up Vaultwarden (Encrypted)..."
@@ -57,8 +68,8 @@ case "$COMMAND" in
         fi
         ;;
     maintenance)
-        echo "🛠️ Triggering server-side maintenance on kpihx-labs..."
-        ssh -t kpihx-labs "sudo /root/proxmox/maintenance.sh"
+        echo "🛠️ Triggering server-side maintenance on kpihx-pve..."
+        ssh -t kpihx-pve "sudo /root/proxmox/maintenance.sh"
         ;;
     help)
         usage; exit 0
